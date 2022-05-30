@@ -8,7 +8,6 @@ from scipy.optimize import curve_fit
 import numpy as np
 from matplotlib import pyplot as plt
 import random
-import seaborn as sns
 from datetime import datetime
 import csv
 
@@ -50,26 +49,61 @@ class Sample:
         assert a >= 0.0, f'{a=} while should be non-negative'
         return min(self.ydata) + (max(self.ydata) - min(self.ydata))/(1+10**((math.log(a) - x) * b))
 
+    def asymmetrical_reverse_sigmoid(self, x, a, b, c):
+        return min(self.ydata) + (max(self.ydata) - min(self.ydata)) / np.power(1 + np.power(10, a*(x - b)), c)
+
     def get_popt_pcov(self):
-        self.popt, self.pcov = curve_fit(self.reverse_sigmoid, self.xdata, self.ydata, method='dogbox')
+        # self.popt, self.pcov = curve_fit(self.reverse_sigmoid, self.xdata, self.ydata, method='dogbox')
+        self.popt, self.pcov = curve_fit(self.asymmetrical_reverse_sigmoid, self.xdata, self.ydata, method='dogbox', max_nfev=10000*len(self.xdata))
+        print(f'{self.popt=}')
 
     def calculate_endpoint_titer(self, cutoff: float):
         self.get_popt_pcov()
 
-        if max(self.ydata) > cutoff*2:
-            self.endpoint_titer = 1/10**self.revert_x(cutoff*2)
+        if max(self.ydata) > cutoff:
+            # self.endpoint_titer = 1/10**self.revert_x(cutoff)
+            # self.endpoint_titer = 1/10**self.revert_x_asymmetrical(cutoff)
+            self.endpoint_titer = 10**self.revert_x_asymmetrical(cutoff)
         else:
             self.bad_data = True
             print(f'Sample {self.name} has a bad data for this cutoff ({cutoff}) and will not be included'
                   f' in calculations! Try to lower calculation accuracy.')
 
     def approximate(self, x: float) -> float:
-        return self.reverse_sigmoid(x, self.popt[0], self.popt[1])
+        # return self.reverse_sigmoid(x, self.popt[0], self.popt[1])
+        return self.asymmetrical_reverse_sigmoid(x, self.popt[0], self.popt[1], self.popt[2])
 
     def revert_x(self, y: float) -> float:
         a = self.popt[0]
         b = self.popt[1]
         return (math.log10((max(self.ydata) - y) / y) / b) - math.log(a)
+
+    def revert_x_asymmetrical(self, y: float) -> float:
+        # iterate over x values, looking for one that provides sigmoid closest to y
+        #
+        # note: in this approximation we use the fact that target function is descending
+
+        # find a pair of x values such that approximate(left) > y > approximate(right)
+        left_x = self.xdata[0]
+        right_x = None
+        for x in self.xdata[1:]:
+            right_x = x
+            current_y = self.approximate(x)
+            if current_y < y:
+                break
+            left_x, right_x = right_x, None
+        if right_x is None:
+            right_x = self.xdata[-1]
+
+        # subdivide the range between the found pair of x values to increase the precision
+        step_count = 1000
+        step_size = (right_x - left_x) / step_count
+        for i in range(step_count):
+            x = left_x + step_size * i
+            current_y = self.approximate(x)
+            if current_y < y:
+                return x
+        return right_x
 
     def get_endpoint_titer(self):
         return self.endpoint_titer
@@ -77,13 +111,18 @@ class Sample:
     def get_R2(self):
         residuals = []
         for i in range(0, len(self.ydata)):
-            residuals.append(self.ydata[i] - self.reverse_sigmoid(self.xdata[i], self.popt[0], self.popt[1]))
+            # residuals.append(self.ydata[i] - self.reverse_sigmoid(self.xdata[i], self.popt[0], self.popt[1]))
+            residuals.append(self.ydata[i] - self.asymmetrical_reverse_sigmoid(self.xdata[i], self.popt[0], self.popt[1], self.popt[2]))
         ss_res = np.sum([x**2 for x in residuals])
         ss_tot = np.sum([(y-np.mean(self.ydata))**2 for y in self.ydata])
         self.R2 = 1 - (ss_res/ss_tot)
 
     def get_quality_vector(self):
-        return math.sqrt(self.approximate(math.log(self.popt[0]))**2 + math.log(self.popt[0])**2 + self.R2**2)
+        # return math.sqrt(self.approximate(math.log(self.popt[0]))**2 + math.log(self.popt[0])**2 + self.R2**2)
+        mean_y = (min(self.ydata) + max(self.ydata)) / 2
+        x = self.revert_x_asymmetrical(mean_y)
+        return math.sqrt(mean_y**2 + x**2 + self.R2**2)
+
 
     def __repr__(self):
         return f'Sample "{self.name}"\n' + \
@@ -272,13 +311,25 @@ def build_common_plot(groups: list, folder_name=None):
     df_sorted = df.sort_values(['Titer', 'Group'])
     print(df_sorted)
     plt.figure(figsize=(8, 6), dpi=80)
-    sns.stripplot(x='Group', y='Titer', data=df_sorted, color='black', size=5, jitter=0.1)
+    group_offset = 1
+    sample_offset = 0.001
+    colors_set = random.sample(colors, len(groups))
+    for group_index in range(len(groups)):
+        group = groups[group_index]
+        ydata = [sample.get_endpoint_titer() for sample in group.samples]
+        fake_xdata = [group_offset*group_index + sample_index*sample_offset for sample_index in range(len(group.samples))]
+        plt.scatter(fake_xdata, ydata, label=f'{group.name}', s=20, color=colors_set[group_index])
+        # draw mean value as a separate scatter (with 1 element)
+        mean_y = np.mean(ydata)
+        plt.scatter([group_offset*group_index], [mean_y], label=f'mean: {mean_y:.2f}', marker='_', s=400, color=colors_set[group_index])
 
-    for i in range(len(df['Group'].unique())-1):
-        plt.vlines(i+.5, 0, 10, linestyles='solid', colors='black', alpha=0.2)
+    # for i in range(len(df['Group'].unique())-1):
+    #     plt.vlines(i+.5, 0, 10, linestyles='solid', colors='black', alpha=0.2)
 
     plt.title('Average Endpoint Titer', fontsize=18)
-    # plt.legend(title='Cylinders')
+    plt.yscale('log')
+    plt.xticks([i for i in range(len(groups))], [group.name for group in groups])
+    plt.legend()
     plt.show()
     if folder_name is not None:
         plt.savefig(f"{folder_name}/Average Endpoint Titer.png")
