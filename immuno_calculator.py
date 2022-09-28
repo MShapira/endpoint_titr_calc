@@ -27,7 +27,6 @@ colors = ['violet', 'purple', 'blue', 'lime', 'aqua', 'gold', 'chartreuse',
           'orangered', 'firebrick', 'dodgerblue', 'indigo', 'darkorange']
 
 
-# один столбик с данными, которые относятся к одному образцу
 class Sample:
     def __init__(self, name: str, xdata: list, ydata: list):
         self.name = name
@@ -132,7 +131,6 @@ class Sample:
                f'endpoint_titer: {self.endpoint_titer}'
 
 
-# группа образцов
 class AnalyticalGroup:
     def __init__(self, name: str, samples: list):
         self.name = name
@@ -150,8 +148,7 @@ class AnalyticalGroup:
             if sample.name == name:
                 return sample
 
-    # это должны быть ячейки, которые выберет юзер в качестве контроля для каждой группы,
-    # но по умолчанию - все, что идет последним в образце
+
     def get_group_cutoff(self, accuracy: float):
         min_ydata = []
         for sample in self.samples:
@@ -161,7 +158,7 @@ class AnalyticalGroup:
         if len(min_ydata) > 1:
             stdev = np.std(min_ydata)
             mean = np.mean(min_ydata)
-            # выбор тончости уровня значимости (1-a) нужно будет дать юзеру возможность выбирать (бегунком, например)
+
             t = multipliers[accuracy][len(min_ydata)]
             self.cutoff = mean + stdev*t
         else:
@@ -262,8 +259,6 @@ def get_dilutions():
     user_set = input("Provide your dilution set: ")
     dilution_set = user_set.split(' ')
 
-    # если введено первое разведение (1), а потом множитель (2) и число ячеек (3),
-    # то можно сгенерировать разведение самим
     if len(dilution_set) == 3 and int(dilution_set[2]) <= 8:
         pre_dilutions = []
         current_group_indices = 1
@@ -274,7 +269,6 @@ def get_dilutions():
             dilutions.append(math.log10(a))
             current_group_indices += 1
     elif 3 < len(dilution_set) <= 8:
-        # вводить числа, разделяя пробелами
         dilutions = [math.log10(float(x)) for x in dilution_set.split(' ')]
     else:
         print('Something wrong with your dilutions set')
@@ -401,7 +395,6 @@ def main():
 
     data = load_plate_data(xlsx_file)
 
-    # вводить в формате А1-Н3 А4-Н8, разделяя пробелами
     groups_txt_input = [x.strip() for x in input("Set groups: ").split(' ')]
 
     # divide data into groups (we will get 2D array with coords)
@@ -417,7 +410,6 @@ def main():
 
     # create samples
     sample_groups = []
-    # Словарь с группами, в качесве ключей и списком образцов, в качесвте значений
     samples_dict = {}
     for current_group_indices in all_group_indices:
         # use last entry index to determine which column letter is the last for each sample
